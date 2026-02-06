@@ -1,0 +1,42 @@
+{
+  "overlay": {
+    "x": 40,
+    "y": 40,
+    "always_on_top": true,
+    "opacity": 0.95
+  },
+  "items": [
+    {
+      "name": "Gumdrop",
+      "key": "2",
+      "interval_ms": 3000,
+      "jitter_min_ms": 0,
+      "jitter_max_ms": 0,
+      "enabled": true
+    },
+    {
+      "name": "Jelly Beans",
+      "key": "3",
+      "interval_ms": 9500,
+      "jitter_min_ms": 0,
+      "jitter_max_ms": 0,
+      "enabled": true
+    },
+    {
+      "name": "Snowflake",
+      "key": "7",
+      "interval_ms": 9500,
+      "jitter_min_ms": 200,
+      "jitter_max_ms": 400,
+      "enabled": true
+    },
+    {
+      "name": "Stinger",
+      "key": "6",
+      "interval_ms": 9500,
+      "jitter_min_ms": 0,
+      "jitter_max_ms": 0,
+      "enabled": true
+    }
+  ]
+}

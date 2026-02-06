@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Virtualenv
+dev_workspace/.venv/
+
+# Build outputs
+dev_workspace/build/
+dev_workspace/dist/
+dev_workspace/*.spec.bak
+
+# User configs
+bin/config.json
+
+# Ignore most dev_workspace but keep build files tracked
+dev_workspace/*
+!dev_workspace/requirements.txt
+!dev_workspace/build.ps1
+!dev_workspace/build.bat
+!dev_workspace/favwhite.spec
