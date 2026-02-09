@@ -1,7 +1,10 @@
 from __future__ import annotations
-from pynput.keyboard import Controller, Key
 
-_keyboard = Controller()
+from pynput.keyboard import Controller as KeyboardController, Key
+from pynput.mouse import Controller as MouseController, Button
+
+_keyboard = KeyboardController()
+_mouse = MouseController()
 
 _SPECIAL = {
     "enter": Key.enter,
@@ -43,3 +46,8 @@ def press_key(key_str: str) -> None:
         _keyboard.press(k)
         _keyboard.release(k)
         return
+
+
+def click_left() -> None:
+    """Tool use: left click once."""
+    _mouse.click(Button.left, 1)

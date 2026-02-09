@@ -1,47 +1,168 @@
 from __future__ import annotations
-import sys
-from typing import List
 
-from PySide6.QtCore import QTimer
+import json
+import sys
+import urllib.request
+from pathlib import Path
+from typing import List, Optional, Any
+
+from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtGui import QIcon, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QLabel, QCheckBox
+    QPushButton, QTableWidget, QTableWidgetItem, QMessageBox, QLabel,
+    QCheckBox, QComboBox, QHeaderView, QSpinBox, QKeySequenceEdit
 )
 
 from models import MacroItem
-from storage import load_config, save_config, load_items, write_items
-from input_send import press_key
+from storage import load_config, save_config, load_items, write_items, app_resource_path
+from input_send import press_key, click_left
 from scheduler import MacroScheduler
 from overlay import OverlayWindow
 from hotkey import GlobalHotkey
+
+
+ALLOWED_KEYS = ["2", "3", "4", "5", "6", "7"]
+DEFAULT_UPDATE_URL = "https://github.com/Kreativscripts/FavWhite"
+
+
+def _exe_dir() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS).resolve()
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _read_version_json() -> dict:
+    p = _exe_dir() / "version.json"
+    if not p.exists():
+        return {
+            "version": "unknown",
+            "version_checker": "https://favnc.pages.dev/bss/whm.json",
+            "update_url": DEFAULT_UPDATE_URL,
+        }
+
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "version": "unknown",
+            "version_checker": "https://favnc.pages.dev/bss/whm.json",
+            "update_url": DEFAULT_UPDATE_URL,
+        }
+
+
+def _extract_remote_version(payload: Any) -> Optional[str]:
+    if payload is None:
+        return None
+    if isinstance(payload, str):
+        return payload.strip()
+    if isinstance(payload, dict):
+        if isinstance(payload.get("version"), str):
+            return payload["version"].strip()
+        for v in payload.values():
+            if isinstance(v, str):
+                return v.strip()
+    return None
+
+
+def check_for_update(parent: QWidget) -> bool:
+    local_cfg = _read_version_json()
+    local_version = str(local_cfg.get("version", "unknown")).strip()
+    checker_url = str(local_cfg.get("version_checker", "")).strip()
+    update_url = str(local_cfg.get("update_url", DEFAULT_UPDATE_URL)).strip()
+
+    if not checker_url:
+        return True
+
+    try:
+        req = urllib.request.Request(
+            checker_url,
+            headers={"User-Agent": f"FavWhite/{local_version}"}
+        )
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+
+        data = json.loads(raw)
+        remote_version = _extract_remote_version(data)
+
+        if not remote_version:
+            return True
+
+        if remote_version.strip() != local_version:
+            QMessageBox.warning(
+                parent,
+                "Update required",
+                "This is the older version of the app. Please go install the updated version on "
+                "https://github.com/Kreativscripts/FavWhite"
+            )
+            QDesktopServices.openUrl(QUrl(update_url))
+            return False
+
+        return True
+
+    except Exception:
+        return True
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self.setWindowTitle("FavWhite")
-        self.resize(820, 420)
+        ver = _read_version_json().get("version", "unknown")
+        self.setWindowTitle(f"FavWhite ({ver})")
+        self.resize(900, 520)
+        self.setMinimumSize(760, 420)
+        self.setWindowOpacity(0.85)
 
-        # runtime state
+        icon_path = app_resource_path("assets/icon.ico")
+        if icon_path.exists():
+            ico = QIcon(str(icon_path))
+            self.setWindowIcon(ico)
+            QApplication.instance().setWindowIcon(ico)
+
         self._scheduler: MacroScheduler | None = None
         self._overlay: OverlayWindow | None = None
         self._running: bool = False
 
-        # load config
         self._cfg = load_config()
         self._items: List[MacroItem] = load_items(self._cfg)
 
-        # global hotkey (Ctrl+Q)
-        self._hotkey = GlobalHotkey(self._toggle_hotkey)
-        self._hotkey.start()
-
-        # ---------------- UI ----------------
         root = QWidget()
         layout = QVBoxLayout(root)
 
-        header = QLabel("FavWhite Macro UI — Hotkey: Ctrl + Q (Start/Stop)")
-        layout.addWidget(header)
+        header_row = QHBoxLayout()
+        lbl_header = QLabel("FavWhite Macro UI")
+        lbl_header.setStyleSheet("font-weight: 600; font-size: 13px;")
+        header_row.addWidget(lbl_header)
+        header_row.addStretch(1)
+        layout.addLayout(header_row)
+
+        controls = QHBoxLayout()
+
+        controls.addWidget(QLabel("Hotkey:"))
+        self.hotkey_edit = QKeySequenceEdit()
+        self.hotkey_edit.setKeySequence(self._cfg.get("hotkey", "Ctrl+Q"))
+        controls.addWidget(self.hotkey_edit)
+
+        self.btn_apply_hotkey = QPushButton("Apply hotkey")
+        controls.addWidget(self.btn_apply_hotkey)
+
+        controls.addSpacing(16)
+
+        self.chk_tool_use = QCheckBox("Enable tool use")
+        self.chk_tool_use.setChecked(bool(self._cfg.get("tool_use", {}).get("enabled", False)))
+        controls.addWidget(self.chk_tool_use)
+
+        controls.addWidget(QLabel("delay (ms):"))
+        self.spin_tool_delay = QSpinBox()
+        self.spin_tool_delay.setRange(10, 5000)
+        self.spin_tool_delay.setValue(int(self._cfg.get("tool_use", {}).get("interval_ms", 30)))
+        controls.addWidget(self.spin_tool_delay)
+
+        controls.addStretch(1)
+        layout.addLayout(controls)
 
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels([
@@ -52,8 +173,20 @@ class MainWindow(QMainWindow):
             "Jitter min (ms)",
             "Jitter max (ms)"
         ])
-        self.table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.table)
+
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.Stretch)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSortingEnabled(False)
+
+        layout.addWidget(self.table, stretch=1)
 
         btn_row = QHBoxLayout()
 
@@ -68,6 +201,7 @@ class MainWindow(QMainWindow):
         self.btn_save.clicked.connect(self._save)
         self.btn_start.clicked.connect(self._start)
         self.btn_stop.clicked.connect(self._stop)
+        self.btn_apply_hotkey.clicked.connect(self._apply_hotkey)
 
         btn_row.addWidget(self.btn_add)
         btn_row.addWidget(self.btn_remove)
@@ -83,13 +217,10 @@ class MainWindow(QMainWindow):
 
         self._load_into_table()
 
-    # ---------------- HOTKEY ----------------
+        self._hotkey = GlobalHotkey(self._toggle_hotkey, self._cfg.get("hotkey", "Ctrl+Q"))
+        self._hotkey.start()
 
     def _toggle_hotkey(self) -> None:
-        """
-        Called from pynput thread.
-        MUST schedule into Qt thread.
-        """
         QTimer.singleShot(0, self._toggle_from_ui_thread)
 
     def _toggle_from_ui_thread(self) -> None:
@@ -98,18 +229,30 @@ class MainWindow(QMainWindow):
         else:
             self._start()
 
-    # ---------------- WINDOW EVENTS ----------------
+    def _apply_hotkey(self) -> None:
+        seq = self.hotkey_edit.keySequence().toString().strip()
+        if not seq:
+            QMessageBox.warning(self, "Invalid hotkey", "Pick a hotkey first.")
+            return
+
+        self._cfg["hotkey"] = seq
+        save_config(self._cfg)
+
+        try:
+            self._hotkey.set_hotkey(seq)
+        except Exception:
+            QMessageBox.warning(self, "Hotkey failed", "Could not register that hotkey.")
+            return
+
+        QMessageBox.information(self, "Hotkey saved", f"Hotkey set to: {seq}")
 
     def closeEvent(self, event):
         try:
             self._hotkey.stop()
         except Exception:
             pass
-
         self._stop()
         event.accept()
-
-    # ---------------- TABLE LOAD/SAVE ----------------
 
     def _load_into_table(self) -> None:
         self.table.setRowCount(0)
@@ -122,10 +265,16 @@ class MainWindow(QMainWindow):
 
         enabled = QCheckBox()
         enabled.setChecked(it.enabled)
+        enabled.setStyleSheet("margin-left:10px;")
         self.table.setCellWidget(r, 0, enabled)
 
         self.table.setItem(r, 1, QTableWidgetItem(it.name))
-        self.table.setItem(r, 2, QTableWidgetItem(it.key))
+
+        key_box = QComboBox()
+        key_box.addItems(ALLOWED_KEYS)
+        key_box.setCurrentText(it.key if it.key in ALLOWED_KEYS else "2")
+        self.table.setCellWidget(r, 2, key_box)
+
         self.table.setItem(r, 3, QTableWidgetItem(str(it.interval_ms)))
         self.table.setItem(r, 4, QTableWidgetItem(str(it.jitter_min_ms)))
         self.table.setItem(r, 5, QTableWidgetItem(str(it.jitter_max_ms)))
@@ -138,7 +287,11 @@ class MainWindow(QMainWindow):
             enabled = enabled_widget.isChecked() if isinstance(enabled_widget, QCheckBox) else True
 
             name = self.table.item(r, 1).text().strip() if self.table.item(r, 1) else "Item"
-            key = self.table.item(r, 2).text().strip() if self.table.item(r, 2) else "1"
+
+            key_widget = self.table.cellWidget(r, 2)
+            key = key_widget.currentText().strip() if isinstance(key_widget, QComboBox) else "2"
+            if key not in ALLOWED_KEYS:
+                key = "2"
 
             def _int(col: int, default: int) -> int:
                 try:
@@ -161,10 +314,8 @@ class MainWindow(QMainWindow):
 
         return items
 
-    # ---------------- BUTTON ACTIONS ----------------
-
     def _add_row(self) -> None:
-        self._append_item(MacroItem(name="NewItem", key="1", interval_ms=1000))
+        self._append_item(MacroItem(name="NewItem", key="2", interval_ms=1000))
 
     def _remove_selected(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
@@ -173,11 +324,20 @@ class MainWindow(QMainWindow):
 
     def _save(self) -> None:
         self._items = self._read_table_items()
+
+        self._cfg["tool_use"] = {
+            "enabled": bool(self.chk_tool_use.isChecked()),
+            "interval_ms": int(self.spin_tool_delay.value()),
+        }
+
+        seq = self.hotkey_edit.keySequence().toString().strip()
+        if seq:
+            self._cfg["hotkey"] = seq
+
         cfg = write_items(self._cfg, self._items)
         save_config(cfg)
-        QMessageBox.information(self, "Saved", "Saved into favwhite.cfg")
 
-    # ---------------- START/STOP ----------------
+        QMessageBox.information(self, "Saved", "Saved into favwhite.cfg")
 
     def _start(self) -> None:
         if self._running:
@@ -185,23 +345,34 @@ class MainWindow(QMainWindow):
 
         self._items = self._read_table_items()
 
-        if not any(i.enabled for i in self._items):
-            QMessageBox.warning(self, "Nothing enabled", "Enable at least one item.")
+        tool_enabled = bool(self.chk_tool_use.isChecked())
+        tool_delay = int(self.spin_tool_delay.value())
+
+        if not any(i.enabled for i in self._items) and not tool_enabled:
+            QMessageBox.warning(self, "Nothing enabled", "Enable at least one macro item or enable tool use.")
             return
 
         def on_stop():
             self._stop()
 
-        self._overlay = OverlayWindow(self._items, on_stop=on_stop)
+        self._overlay = OverlayWindow(
+            self._items,
+            on_stop=on_stop,
+            tool_use_enabled=tool_enabled,
+            tool_use_interval_ms=tool_delay
+        )
 
         def on_tick(snapshot):
             if self._overlay:
                 self._overlay.set_state(snapshot)
 
         self._scheduler = MacroScheduler(
-            self._items,
+            items=self._items,
             send_fn=press_key,
-            on_tick=on_tick
+            on_tick=on_tick,
+            tool_use_enabled=tool_enabled,
+            tool_use_interval_ms=tool_delay,
+            tool_use_fn=click_left
         )
 
         self._scheduler.start()
@@ -230,6 +401,17 @@ class MainWindow(QMainWindow):
 
 def main() -> None:
     app = QApplication(sys.argv)
+
+    icon_path = app_resource_path("assets/icon.ico")
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
+    temp = QWidget()
+    temp.setWindowIcon(app.windowIcon())
+
+    if not check_for_update(temp):
+        return
+
     w = MainWindow()
     w.show()
     sys.exit(app.exec())

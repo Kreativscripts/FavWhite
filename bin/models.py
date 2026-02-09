@@ -19,7 +19,7 @@ class MacroItem:
     def from_dict(d: Dict[str, Any]) -> "MacroItem":
         return MacroItem(
             name=str(d.get("name", "Item")),
-            key=str(d.get("key", "1")),
+            key=str(d.get("key", "2")),
             interval_ms=int(d.get("interval_ms", 1000)),
             jitter_min_ms=int(d.get("jitter_min_ms", 0)),
             jitter_max_ms=int(d.get("jitter_max_ms", 0)),

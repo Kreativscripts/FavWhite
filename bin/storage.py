@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import json
 import os
 import sys
@@ -9,14 +10,22 @@ from models import MacroItem
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
+    "hotkey": "Ctrl+Q",
     "overlay": {"x": 40, "y": 40, "always_on_top": True, "opacity": 0.95},
+    "tool_use": {"enabled": False, "interval_ms": 30},
     "items": [
-        {"name": "Gumdrop",   "key": "2", "interval_ms": 3000, "jitter_min_ms": 0,   "jitter_max_ms": 0,   "enabled": True},
-        {"name": "JB",        "key": "3", "interval_ms": 9500, "jitter_min_ms": 0,   "jitter_max_ms": 0,   "enabled": True},
-        {"name": "Snowflake", "key": "7", "interval_ms": 9500, "jitter_min_ms": 200, "jitter_max_ms": 400, "enabled": True},
-        {"name": "Stinger",   "key": "6", "interval_ms": 9500, "jitter_min_ms": 0,   "jitter_max_ms": 0,   "enabled": True},
+        {"name": "Gumdrop",      "key": "2", "interval_ms": 3000, "jitter_min_ms": 0,   "jitter_max_ms": 0,   "enabled": True},
+        {"name": "Jelly Beans",  "key": "3", "interval_ms": 9500, "jitter_min_ms": 0,   "jitter_max_ms": 0,   "enabled": True},
+        {"name": "Snowflake",    "key": "7", "interval_ms": 9500, "jitter_min_ms": 200, "jitter_max_ms": 400, "enabled": True},
+        {"name": "Stinger",      "key": "6", "interval_ms": 9500, "jitter_min_ms": 0,   "jitter_max_ms": 0,   "enabled": True},
     ],
 }
+
+
+def _resource_base_dir() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS).resolve()
+    return Path(__file__).resolve().parent
 
 
 def _exe_dir() -> Path:
@@ -25,19 +34,19 @@ def _exe_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def app_resource_path(rel: str) -> Path:
+    return _resource_base_dir() / rel
+
+
 def _appdata_cfg_path() -> Path:
-    # Windows AppData roaming
     appdata = os.getenv("APPDATA")
     if appdata:
         return Path(appdata) / "FavWhite" / "favwhite.cfg"
-    # Fallback
     return Path.home() / ".favwhite" / "favwhite.cfg"
 
 
 def cfg_path() -> Path:
-    # Prefer alongside exe/script
-    p = _exe_dir() / "favwhite.cfg"
-    return p
+    return _exe_dir() / "favwhite.cfg"
 
 
 def _is_writable_dir(d: Path) -> bool:
@@ -61,15 +70,27 @@ def resolve_cfg_path() -> Path:
     return fallback
 
 
+def _deep_merge(defaults: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(defaults)
+    for k, v in (user or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
 def load_config() -> Dict[str, Any]:
     p = resolve_cfg_path()
     if p.exists():
         with p.open("r", encoding="utf-8") as f:
-            return json.load(f)
+            cfg = json.load(f)
+        merged = _deep_merge(DEFAULT_CONFIG, cfg)
+        save_config(merged)
+        return merged
 
-    # First run: create cfg from embedded defaults
     save_config(DEFAULT_CONFIG)
-    return DEFAULT_CONFIG
+    return dict(DEFAULT_CONFIG)
 
 
 def save_config(cfg: Dict[str, Any]) -> None:

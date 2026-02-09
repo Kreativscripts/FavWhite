@@ -1,20 +1,34 @@
 from __future__ import annotations
+
 import time
 from typing import Dict, List
 
 from PySide6.QtCore import Qt, QTimer, QPoint
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QFrame
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QFrame
+)
 
 from models import MacroItem
 from scheduler import ItemState
 
 
 class OverlayWindow(QWidget):
-    def __init__(self, items: List[MacroItem], on_stop) -> None:
+    def __init__(
+        self,
+        items: List[MacroItem],
+        on_stop,
+        tool_use_enabled: bool = False,
+        tool_use_interval_ms: int = 30
+    ) -> None:
         super().__init__()
+
         self._items = items
         self._on_stop = on_stop
         self._drag_pos: QPoint | None = None
+
+        self._tool_use_enabled = tool_use_enabled
+        self._tool_use_interval_ms = tool_use_interval_ms
 
         self.setWindowTitle("FavWhite Overlay")
         self.setWindowFlags(
@@ -48,9 +62,15 @@ class OverlayWindow(QWidget):
         """)
 
         v = QVBoxLayout(card)
+
         title = QLabel("FavWhite — Running")
         title.setStyleSheet("font-size: 13px; font-weight: 600;")
         v.addWidget(title)
+
+        if self._tool_use_enabled:
+            lbl = QLabel(f"Tool use [LClick] — every {self._tool_use_interval_ms}ms — uses: 0")
+            self._labels["Tool use"] = lbl
+            v.addWidget(lbl)
 
         for it in items:
             lbl = QLabel(f"{it.name} [{it.key}] — next: ---, uses: 0")
@@ -68,24 +88,42 @@ class OverlayWindow(QWidget):
         self.setLayout(root)
 
         self._latest_state: Dict[str, ItemState] = {}
+
         self._timer = QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._render)
         self._timer.start()
+
+        QTimer.singleShot(0, self._apply_start_pos)
+
+    def _apply_start_pos(self) -> None:
+        x = 1784
+        y = 233
+
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            x = max(geo.left(), min(x, geo.right() - self.width()))
+            y = max(geo.top(), min(y, geo.bottom() - self.height()))
+
+        self.move(x, y)
 
     def set_state(self, states: Dict[str, ItemState]) -> None:
         self._latest_state = states
 
     def _render(self) -> None:
         now = time.monotonic()
-        for it in self._items:
-            st = self._latest_state.get(it.name)
+        for name, lbl in self._labels.items():
+            st = self._latest_state.get(name)
             if st is None:
                 continue
+
             remaining = max(0.0, st.next_fire_monotonic - now)
-            self._labels[it.name].setText(
-                f"{it.name} [{it.key}] — next: {remaining:0.1f}s, uses: {st.uses}"
-            )
+
+            if name == "Tool use":
+                lbl.setText(f"Tool use [LClick] — next: {remaining:0.1f}s, uses: {st.uses}")
+            else:
+                lbl.setText(f"{name} — next: {remaining:0.1f}s, uses: {st.uses}")
 
     def _on_stop_clicked(self) -> None:
         self._on_stop()
